@@ -4,7 +4,7 @@ import {
   Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine,
 } from 'recharts';
 import { fft as computeFFT, ifft, magnitude, applyBandpass } from '@/lib/fft';
-import { type WaveSource, SAMPLE_RATE, computeIndividualWaveHeight, computeWaveHeight } from '@/lib/waveTypes';
+import { type WaveSource, AMP_RANGE, DIST_SCALE, SAMPLE_RATE, computeIndividualWaveHeight, computeWaveHeight, computeFundamentalPeriod, TIME_SCALE } from '@/lib/waveTypes';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -33,8 +33,8 @@ const TOOLTIP_STYLE = {
 
 const STEP_LABELS = [
   '① Individual Waves → Superposition',
-  '② Sampling → DFT (FFT)',
-  '③ Filtering → IDFT Reconstruction',
+  '② Sampling → Frequency Domain (FFT)',
+  '③ Filtering → iFFT Reconstruction',
 ];
 
 // Fixed analytical window: next power-of-2 at or above 4 s of samples.
@@ -61,7 +61,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
     if (enabledSources.length === 0) return null;
 
     // ── Synthesise analytical buffer at full SAMPLE_RATE ─────────────────────
-    // t = 0 … ANALYSIS_N/SAMPLE_RATE. Because the wave functions are stationary
+    // t = 0 ... ANALYSIS_N/SAMPLE_RATE. Because the wave functions are stationary
     // sinusoids this window captures all frequency content without needing a
     // live-updated ring buffer.
     const raw = new Float32Array(ANALYSIS_N);
@@ -71,18 +71,20 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
 
     // ── Step 1: individual waves + superposition ──────────────────────────────
     const step1Data: Record<string, number>[] = [];
+    const fundamentalPeriod = computeFundamentalPeriod(enabledSources);
     for (let i = 0; i < DISPLAY_N; i++) {
-      const t = i / SAMPLE_RATE;
+      const t = (i / DISPLAY_N) * fundamentalPeriod;
       const entry: Record<string, number> = { time: +t.toFixed(3) };
       let sum = 0;
       enabledSources.forEach((s, si) => {
         const h = computeIndividualWaveHeight(buoyX, buoyZ, t, s);
-        entry[`src_${si}`] = +h.toFixed(4);
-        sum += h;
+        entry[`src_${si}`] = +(h / DIST_SCALE).toFixed(4);
+        sum += h / DIST_SCALE;
       });
       entry.sum = +sum.toFixed(4);
       step1Data.push(entry);
     }
+    console.log(step1Data);
 
     // ── Step 2: sampled signal + FFT ─────────────────────────────────────────
     const downsampleFactor = Math.max(1, Math.round(SAMPLE_RATE / sampleRate));
@@ -221,8 +223,8 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
               key={i}
               onClick={() => setStep(i)}
               className={`text-[11px] px-2 py-0.5 rounded transition-colors ${i === step
-                  ? 'bg-primary/20 text-primary font-semibold'
-                  : 'text-muted-foreground hover:text-foreground'
+                ? 'bg-primary/20 text-primary font-semibold'
+                : 'text-muted-foreground hover:text-foreground'
                 }`}
             >
               {label}
@@ -272,6 +274,8 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
   );
 }
 
+const chartMargin = { top: 5, right: 10, bottom: 15, left: 5 };
+
 /* ─── Step 1: Individual waves + Superposition ─── */
 function Step1Graphs({ data, sources }: {
   data: Record<string, number>[];
@@ -283,18 +287,34 @@ function Step1Graphs({ data, sources }: {
         <h3 className="text-xs font-semibold text-foreground mb-1">
           Individual Wave Functions at Buoy Position
         </h3>
-        <p className="text-[10px] text-muted-foreground mb-1">
-          Each source: A · sin(2πft − kr) / √(r·0.05+1)
-        </p>
+        {/* <p className="text-[10px] text-muted-foreground mb-1"> */}
+        {/*   Each source: A · sin(2πft − kr) / √(r·0.05+1) */}
+        {/* </p> */}
         <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 5, right: 10, bottom: 20, left: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
-              <XAxis dataKey="time" tick={TICK_STYLE}
-                label={{ value: 'Time (s)', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+            <LineChart data={data} margin={chartMargin} syncId="amp">
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+              <ReferenceLine y={0} />
+              <XAxis
+                type="number"
+                domain={['dataMin', 'dataMax']}
+                dataKey="time"
+                tick={TICK_STYLE}
+                label={{ value: 'Time', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
-              <YAxis tick={TICK_STYLE} label={{ value: 'Height (m)', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }} />
-              <Tooltip {...TOOLTIP_STYLE} />
+              <YAxis
+
+                type="number"
+                // domain={[-AMP_RANGE.max, AMP_RANGE.max]}
+                // ticks={Array.from(
+                //   { length: Math.floor((AMP_RANGE.max * 2) / 0.5) },
+                //   (_, i) => +(-AMP_RANGE.max + i * 0.5).toFixed(1)
+                // )}
+                tickFormatter={(v) => v.toFixed(1)}
+                tick={TICK_STYLE}
+                label={{ value: 'Amplitude', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+              />
+              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Time: ${label}`} />
               {sources.map((s, i) => (
                 <Line
                   key={s.id}
@@ -304,6 +324,7 @@ function Step1Graphs({ data, sources }: {
                   dot={false}
                   strokeWidth={1.5}
                   name={s.label}
+
                   isAnimationActive={false}
                 />
               ))}
@@ -315,19 +336,35 @@ function Step1Graphs({ data, sources }: {
         <h3 className="text-xs font-semibold text-foreground mb-1">
           Superposition → Buoy Height h(t) = Σ waves
         </h3>
-        <p className="text-[10px] text-muted-foreground mb-1">
-          The buoy measures the sum of all wave contributions
-        </p>
+        {/* <p className="text-[10px] text-muted-foreground mb-1"> */}
+        {/*   The buoy measures the sum of all wave contributions */}
+        {/* </p> */}
         <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 5, right: 10, bottom: 20, left: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
-              <XAxis dataKey="time" tick={TICK_STYLE}
-                label={{ value: 'Time (s)', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+            <LineChart data={data} margin={chartMargin} syncId="amp">
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+              <ReferenceLine y={0} />
+              <XAxis
+                type="number"
+                domain={['dataMin', 'dataMax']}
+                dataKey="time"
+                tick={TICK_STYLE}
+                label={{ value: 'Time', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
-              <YAxis tick={TICK_STYLE} label={{ value: 'Height (m)', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }} />
-              <Tooltip {...TOOLTIP_STYLE} />
-              <Line type="monotone" dataKey="sum" stroke="hsl(185, 70%, 45%)" dot={false} strokeWidth={2} name="h(t) = Σ" isAnimationActive={false} />
+              <YAxis
+                type="number"
+                // domain={[-AMP_RANGE.max, AMP_RANGE.max]}
+                // interval={0.5}
+                // ticks={Array.from(
+                //   { length: Math.floor((AMP_RANGE.max * 2) / 0.5) + 1 },
+                //   (_, i) => +(-AMP_RANGE.max + i * 0.5).toFixed(1)
+                // )}
+                tickFormatter={(v) => v.toFixed(1)}
+                tick={TICK_STYLE}
+                label={{ value: 'Buoy Height', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+              />
+              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Time: ${label}`} />
+              <Line type="monotone" dataKey="sum" stroke="hsl(185, 70%, 45%)" dot={false} strokeWidth={2} name="Buoy Height" isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>

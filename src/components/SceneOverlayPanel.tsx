@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { type WaveSource, createSourceFromPreset, SOURCE_PRESETS } from '@/lib/waveTypes';
+import { type WaveSource, createSourceFromPreset, DEFAULT_SOURCES, FREQ_RANGE, AMP_RANGE } from '@/lib/waveTypes';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -30,8 +30,6 @@ function SourceItem({ source, onUpdate, onRemove }: {
   onRemove: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const freqRange = { min: 1, max: 15, step: 1 };
-  const ampRange = { min: 0, max: 2.5, step: 0.01 };
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -58,7 +56,7 @@ function SourceItem({ source, onUpdate, onRemove }: {
               <Slider
                 value={[source.frequency]}
                 onValueChange={([v]) => onUpdate(source.id, { frequency: Math.round(v) })}
-                min={freqRange.min} max={freqRange.max} step={freqRange.step}
+                min={FREQ_RANGE.min} max={FREQ_RANGE.max} step={FREQ_RANGE.step}
                 className="w-24"
               />
               {/* <InfoTip> */}
@@ -74,7 +72,7 @@ function SourceItem({ source, onUpdate, onRemove }: {
               <Slider
                 value={[source.amplitude]}
                 onValueChange={([v]) => onUpdate(source.id, { amplitude: v })}
-                min={ampRange.min} max={ampRange.max} step={ampRange.step}
+                min={AMP_RANGE.min} max={AMP_RANGE.max} step={AMP_RANGE.step}
                 className="w-24"
               />
               <InfoTip>
@@ -147,7 +145,7 @@ export default function SceneOverlayPanel({ sources, onSourcesChange, buoyX, buo
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-40">
-            {SOURCE_PRESETS.map((preset, i) => (
+            {DEFAULT_SOURCES.map((preset, i) => (
               <DropdownMenuItem
                 key={i}
                 className="text-[11px] gap-2"
@@ -188,8 +186,8 @@ export default function SceneOverlayPanel({ sources, onSourcesChange, buoyX, buo
         </div>
       </div>
 
-      <p className="text-[12px] text-muted-foreground/80 px-1">
-        Shift+drag markers to move
+      <p className="text-[11px] text-muted-foreground/80 px-1">
+        Shift+drag wave sources to move them
         <br />
         Space to pause
       </p>

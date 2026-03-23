@@ -16,17 +16,32 @@ export type SourcePreset = {
   color: string;
 };
 
-export const SOURCE_PRESETS: SourcePreset[] = [
-  { label: 'Long Swell', frequency: 1, amplitude: 3, color: '#00d4ff' },
-  { label: 'Wind Chop', frequency: 4, amplitude: 1.5, color: '#00ff88' },
-  { label: 'Boat Wake', frequency: 6, amplitude: 0.5, color: '#ff8800' },
+export const DEFAULT_SOURCES: WaveSource[] = [
+  {
+    id: '1', label: 'Long Swell', x: -20, z: -15,
+    frequency: 1, amplitude: 2.5,
+    enabled: true, color: '#00d4ff',
+  },
+  {
+    id: '2', label: 'Wind Chop', x: 15, z: 12,
+    frequency: 4, amplitude: 1,
+    enabled: true, color: '#00ff88',
+  },
+  {
+    id: '3', label: 'Boat Wake', x: 5, z: -5,
+    frequency: 6, amplitude: 1,
+    enabled: true, color: '#ff8800',
+  },
 ];
+
+export const FREQ_RANGE = { min: 1, max: 15, step: 1 };
+export const AMP_RANGE = { min: 0, max: 2.5, step: 0.01 };
 
 export const WAVE_SPEED = 5;
 export const SAMPLE_RATE = 30;
 export const BUFFER_SIZE = 512;
-const TIME_SCALE = 0.1;
-const DIST_SCALE = 0.25;
+export const TIME_SCALE = 0.1;
+export const DIST_SCALE = 0.25;
 
 export function batchComputeWaveHeights(
   pos: any,
@@ -132,7 +147,7 @@ export function computeFundamentalPeriod(sources: WaveSource[]): number {
     g = gcd(g, freqValues[i]);
   }
 
-  return 1 / g;
+  return 1 / (g * TIME_SCALE);
 }
 
 /**
@@ -173,21 +188,4 @@ export function createSource(): WaveSource {
   };
 }
 
-export const defaultSources: WaveSource[] = [
-  {
-    id: '1', label: 'Long Swell', x: -20, z: -15,
-    frequency: 1, amplitude: 3,
-    enabled: true, color: '#00d4ff',
-  },
-  {
-    id: '2', label: 'Wind Chop', x: 15, z: 12,
-    frequency: 4, amplitude: 1,
-    enabled: true, color: '#00ff88',
-  },
-  {
-    id: '3', label: 'Boat Wake', x: 5, z: -5,
-    frequency: 6, amplitude: 1,
-    enabled: true, color: '#ff8800',
-  },
-];
 

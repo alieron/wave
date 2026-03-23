@@ -4,11 +4,11 @@ import { Panel, Group, Separator } from 'react-resizable-panels';
 import OceanScene from '@/components/OceanScene';
 import SceneOverlayPanel from '@/components/SceneOverlayPanel';
 import AnalysisPanel from '@/components/AnalysisPanel';
-import { type WaveSource, defaultSources, SAMPLE_RATE } from '@/lib/waveTypes';
+import { type WaveSource, DEFAULT_SOURCES, SAMPLE_RATE } from '@/lib/waveTypes';
 import { Button } from '@/components/ui/button';
 
 const Index = () => {
-  const [sources, setSources] = useState<WaveSource[]>(defaultSources);
+  const [sources, setSources] = useState<WaveSource[]>(DEFAULT_SOURCES);
   const [buoyX, setBuoyX] = useState(0);
   const [buoyZ, setBuoyZ] = useState(0);
   const [paused, setPaused] = useState(false);
