@@ -38,7 +38,7 @@ export const FREQ_RANGE = { min: 0.01, max: 3.00, step: 0.01 };
 export const AMP_RANGE = { min: 0, max: 2.5, step: 0.01 };
 
 export const WAVE_SPEED = 5;
-export const SAMPLE_RATE = 3;
+export const SAMPLE_RATE = 5;
 export const TIME_SCALE = 1; // oopsies
 export const DIST_SCALE = 0.15;
 const PRECISION = 100;
@@ -160,31 +160,24 @@ export function computeFundamentalFrequency(sources: WaveSource[]): number {
 
 let _nextId = 4;
 
-export function createSourceFromPreset(preset: SourcePreset): WaveSource {
-  const id = String(_nextId++);
-  return {
-    id,
-    label: preset.label,
-    x: Math.round(Math.random() * 40 - 20),
-    z: Math.round(Math.random() * 40 - 20),
-    frequency: preset.frequency,
-    amplitude: preset.amplitude || Math.floor(1 + Math.random() * 2),
-    enabled: true,
-    color: preset.color,
-  };
+function randomBetween(min: number, max: number) {
+  return Math.random() * (max - min) + min;
 }
 
-export function createSource(): WaveSource {
-  const id = String(_nextId++);
+function randomColor() {
+  return `hsl(${Math.floor(Math.random() * 360)}, 70%, 60%)`;
+}
+
+export function createRandomSource(): WaveSource {
   return {
-    id,
-    label: `Wave ${id}`,
-    x: Math.round(Math.random() * 40 - 20),
-    z: Math.round(Math.random() * 40 - 20),
-    frequency: 1,
-    amplitude: 3,
+    id: crypto.randomUUID(),
+    label: `Source ${_nextId++}`,
+    color: randomColor(),
     enabled: true,
-    color: `hsl(${Math.floor(Math.random() * 160 + 140)}, 75%, 55%)`,
+    frequency: +randomBetween(FREQ_RANGE.min, FREQ_RANGE.max).toFixed(2),
+    amplitude: +randomBetween(AMP_RANGE.min, AMP_RANGE.max).toFixed(2),
+    x: Math.floor(randomBetween(-30, 30)),
+    z: Math.floor(randomBetween(-30, 30)),
   };
 }
 

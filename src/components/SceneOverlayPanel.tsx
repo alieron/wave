@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { type WaveSource, createSourceFromPreset, DEFAULT_SOURCES, FREQ_RANGE, AMP_RANGE } from '@/lib/waveTypes';
+import { type WaveSource, FREQ_RANGE, AMP_RANGE, createRandomSource } from '@/lib/waveTypes';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -7,13 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Plus, Trash2, Flag, ChevronDown, ChevronRight, Disc } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-
 import { InfoTip } from './InfoTip';
 
 interface Props {
@@ -38,7 +31,14 @@ function SourceItem({ source, onUpdate, onRemove }: {
           <button className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-secondary/30 transition-colors rounded-t">
             {open ? <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" /> : <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />}
             <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: source.color }} />
-            <span className="text-[11px] font-medium text-foreground truncate flex-1">{source.label}</span>
+            <Input
+              value={source.label}
+              onChange={(e) =>
+                onUpdate(source.id, { label: e.target.value })
+              }
+              onClick={(e) => e.stopPropagation()}
+              className="h-5 text-[11px] px-1 flex-1 bg-transparent border-none shadow-none"
+            />
             <Switch
               checked={source.enabled}
               onCheckedChange={v => { onUpdate(source.id, { enabled: v }); }}
@@ -135,28 +135,14 @@ export default function SceneOverlayPanel({ sources, onSourcesChange, buoyX, buo
         {sources.map(s => (
           <SourceItem key={s.id} source={s} onUpdate={updateSource} onRemove={removeSource} />
         ))}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="sm" variant="ghost"
-              className="w-full h-6 text-[10px] text-muted-foreground hover:text-foreground"
-            >
-              <Plus className="w-3 h-3 mr-1" /> Add Source
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-40">
-            {DEFAULT_SOURCES.map((preset, i) => (
-              <DropdownMenuItem
-                key={i}
-                className="text-[11px] gap-2"
-                onClick={() => onSourcesChange([...sources, createSourceFromPreset(preset)])}
-              >
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: preset.color }} />
-                {preset.label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Button
+          size="sm" variant="ghost"
+          className="w-full h-6 text-[10px] text-muted-foreground hover:text-foreground"
+          onClick={() => onSourcesChange([...sources, createRandomSource()])}
+
+        >
+          <Plus className="w-3 h-3 mr-1" /> Add Source
+        </Button>
       </div>
 
       {/* Buoy */}
