@@ -1,7 +1,7 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine,
+  Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, Scatter
 } from 'recharts';
 import { fft as computeFFT, ifft, magnitude, applyBandpass } from '@/lib/fft';
 import { type WaveSource, AMP_RANGE, DIST_SCALE, SAMPLE_RATE, computeIndividualWaveHeight, computeWaveHeight, computeFundamentalPeriod, TIME_SCALE } from '@/lib/waveTypes';
@@ -33,8 +33,8 @@ const TOOLTIP_STYLE = {
 
 const STEP_LABELS = [
   '① Individual Waves → Superposition',
-  '② Sampling → Frequency Domain (FFT)',
-  '③ Filtering → iFFT Reconstruction',
+  '② Time Domain → Frequency Domain (FFT)',
+  '③ Frequency Filtering → iFFT Reconstruction',
 ];
 
 // Fixed analytical window: next power-of-2 at or above 4 s of samples.
@@ -47,11 +47,11 @@ const ANALYSIS_N = (() => {
 })();
 
 // Visible slice in time-domain plots (keeps charts snappy)
-const DISPLAY_N = Math.min(256, ANALYSIS_N);
+// const DISPLAY_N = Math.min(256, ANALYSIS_N);
+const DISPLAY_N = 512;
 
 export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSampleRateChange }: Props) {
   const [step, setStep] = useState(0);
-  const [filterEnabled, setFilterEnabled] = useState(false);
   const [filterRange, setFilterRange] = useState<[number, number]>([0, 0.4]);
   const [dragStart, setDragStart] = useState<number | null>(null);
   const [dragEnd, setDragEnd] = useState<number | null>(null);
@@ -60,114 +60,128 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
     const enabledSources = sources.filter(s => s.enabled);
     if (enabledSources.length === 0) return null;
 
-    // ── Synthesise analytical buffer at full SAMPLE_RATE ─────────────────────
-    // t = 0 ... ANALYSIS_N/SAMPLE_RATE. Because the wave functions are stationary
-    // sinusoids this window captures all frequency content without needing a
-    // live-updated ring buffer.
-    const raw = new Float32Array(ANALYSIS_N);
-    for (let i = 0; i < ANALYSIS_N; i++) {
-      raw[i] = computeWaveHeight(buoyX, buoyZ, i / SAMPLE_RATE, enabledSources);
-    }
-
     // ── Step 1: individual waves + superposition ──────────────────────────────
     const step1Data: Record<string, number>[] = [];
     const fundamentalPeriod = computeFundamentalPeriod(enabledSources);
     for (let i = 0; i < DISPLAY_N; i++) {
-      const t = (i / DISPLAY_N) * fundamentalPeriod;
+      // const t = (i / (DISPLAY_N));
+      const t = (i / (DISPLAY_N)) * fundamentalPeriod;
       const entry: Record<string, number> = { time: +t.toFixed(3) };
       let sum = 0;
       enabledSources.forEach((s, si) => {
         const h = computeIndividualWaveHeight(buoyX, buoyZ, t, s);
-        entry[`src_${si}`] = +(h / DIST_SCALE).toFixed(4);
+        // entry[`src_${si}`] = (h / DIST_SCALE);
+        entry[`src_${si}`] = +(h / DIST_SCALE).toFixed(3);
         sum += h / DIST_SCALE;
       });
-      entry.sum = +sum.toFixed(4);
+      // entry.sum = sum;
+      entry.sum = +sum.toFixed(3);
       step1Data.push(entry);
     }
-    console.log(step1Data);
+
+    // console.log(
+    //   step1Data[0].sum,
+    //   step1Data[DISPLAY_N - 1].sum
+    // );
 
     // ── Step 2: sampled signal + FFT ─────────────────────────────────────────
-    const downsampleFactor = Math.max(1, Math.round(SAMPLE_RATE / sampleRate));
-    const sampledIndices: number[] = [];
-    for (let i = 0; i < ANALYSIS_N; i += downsampleFactor) sampledIndices.push(i);
+    const dtSample = 1 / sampleRate;
 
-    const startIdx = ANALYSIS_N - DISPLAY_N;
-    const sampledSet = new Set(sampledIndices);
-    const timeData: Record<string, number | undefined>[] = [];
+    const sampledIndices: number[] = [];
+    let nextSampleTime = 0;
+
     for (let i = 0; i < DISPLAY_N; i++) {
-      const idx = startIdx + i;
+      const t = step1Data[i]["time"];
+
+      if (t >= nextSampleTime) {
+        sampledIndices.push(i);
+        nextSampleTime += dtSample;
+      }
+    }
+
+    const sampledSet = new Set(sampledIndices);
+
+    // Build time-domain data
+    const timeData: Record<string, number | undefined>[] = [];
+
+    for (let i = 0; i < DISPLAY_N; i++) {
       const entry: Record<string, number | undefined> = {
-        time: +(i / SAMPLE_RATE).toFixed(3),
-        raw: +raw[idx].toFixed(3),
+        time: step1Data[i]["time"],
+        raw: step1Data[i]["sum"],
       };
-      if (sampledSet.has(idx)) entry.sampled = +raw[idx].toFixed(3);
+
+      if (sampledSet.has(i)) {
+        entry.sampled = step1Data[i]["sum"];
+      }
+
       timeData.push(entry);
     }
 
     // FFT on the downsampled signal (zero-padded to next power of 2)
-    const sampledValues = sampledIndices.map(i => raw[i]);
+    const sampledValues = sampledIndices.map(i => step1Data[i]["sum"]);
+
+    // Zero-pad to next power of 2
     let fftSize = 1;
     while (fftSize < sampledValues.length) fftSize *= 2;
+
     const re = new Array(fftSize).fill(0);
     const im = new Array(fftSize).fill(0);
-    // Hann window
-    for (let i = 0; i < sampledValues.length; i++) {
-      re[i] = sampledValues[i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / sampledValues.length));
+
+    // Hann window (correct normalization)
+    const N = sampledValues.length;
+    for (let i = 0; i < N; i++) {
+      //   const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1)); // better form
+      //   re[i] = sampledValues[i] * w;
+      re[i] = sampledValues[i];
     }
+
+    // FFT
     computeFFT(re, im);
 
+    // Magnitudes
     const mags = magnitude(re, im);
-    const effectiveSR = SAMPLE_RATE / downsampleFactor;
+
+    const effectiveSR = sampleRate;
+    // Frequency resolution
     const freqBinSize = effectiveSR / fftSize;
-    const maxFreqDisplay = Math.min(effectiveSR / 2, 4);
-    const maxBin = Math.ceil(maxFreqDisplay / freqBinSize);
+
+    // Nyquist limit
+    const maxBin = Math.floor(fftSize / 2);
+
+    // Build spectrum
     const freqData: { frequency: number; magnitude: number; bin: number }[] = [];
-    for (let k = 0; k <= Math.min(maxBin, fftSize / 2); k++) {
+
+    for (let k = 0; k <= maxBin; k++) {
       freqData.push({
         bin: k,
         frequency: +(k * freqBinSize).toFixed(3),
-        magnitude: +(mags[k] * 2 / fftSize).toFixed(4),
+        magnitude: +((mags[k] * 2) / N).toFixed(3), // normalize by actual signal length
       });
     }
 
-    // Peaks
-    const peaks: { frequency: number; magnitude: number }[] = [];
-    for (let i = 2; i < freqData.length - 2; i++) {
-      if (
-        freqData[i].magnitude > 0.01 &&
-        freqData[i].magnitude > freqData[i - 1].magnitude &&
-        freqData[i].magnitude > freqData[i + 1].magnitude &&
-        freqData[i].magnitude > freqData[i - 2].magnitude &&
-        freqData[i].magnitude > freqData[i + 2].magnitude
-      ) {
-        peaks.push(freqData[i]);
+    // ── Step 3: bandpass filter + iFFT ───────────────────────────────────────
+    const fRe = Array.from(re);
+    const fIm = Array.from(im);
+    applyBandpass(fRe, fIm, effectiveSR, filterRange[0], filterRange[1]);
+    ifft(fRe, fIm);
+
+    let filteredTimeData: Record<string, number>[] = [];
+    for (let i = 0, a = 0; i < DISPLAY_N; i++) {
+      const entry: Record<string, number> = {
+        time: step1Data[i]['time'],
+        raw: step1Data[i]['sum'],
+      };
+
+      if (sampledSet.has(i)) {
+        entry.filtered = +(fRe[a]).toFixed(3);
+        a++;
       }
+
+      filteredTimeData.push(entry);
     }
 
-    // ── Step 3: bandpass filter + IDFT ───────────────────────────────────────
-    let filteredTimeData: Record<string, number>[] | null = null;
-    if (filterEnabled) {
-      const fRe = Array.from(raw);
-      const fIm = new Array(ANALYSIS_N).fill(0);
-      for (let i = 0; i < ANALYSIS_N; i++) {
-        fRe[i] *= (0.5 - 0.5 * Math.cos(2 * Math.PI * i / ANALYSIS_N));
-      }
-      computeFFT(fRe, fIm);
-      applyBandpass(fRe, fIm, SAMPLE_RATE, filterRange[0], filterRange[1]);
-      ifft(fRe, fIm);
-
-      filteredTimeData = [];
-      for (let i = 0; i < DISPLAY_N; i++) {
-        filteredTimeData.push({
-          time: +(i / SAMPLE_RATE).toFixed(3),
-          raw: +raw[startIdx + i].toFixed(3),
-          filtered: +fRe[startIdx + i].toFixed(3),
-        });
-      }
-    }
-
-    return { step1Data, timeData, freqData, peaks, filteredTimeData, enabledSources, freqBinSize, effectiveSR, fftSize };
-  }, [sources, buoyX, buoyZ, filterEnabled, filterRange, sampleRate]);
+    return { step1Data, timeData, freqData, filteredTimeData, enabledSources, freqBinSize, effectiveSR, fftSize };
+  }, [sources, buoyX, buoyZ, filterRange, sampleRate]);
 
   // Frequency chart drag handlers for filter range
   const handleFreqMouseDown = useCallback((e: any) => {
@@ -187,12 +201,20 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
       const hi = Math.max(dragStart, dragEnd);
       if (hi - lo > 0.01) {
         setFilterRange([lo, hi]);
-        setFilterEnabled(true);
       }
     }
     setDragStart(null);
     setDragEnd(null);
   }, [dragStart, dragEnd]);
+
+  useEffect(() => {
+    if (!analysis) return;
+
+    const maxBin = Math.floor(analysis.fftSize / 1);
+    const nyquist = maxBin * analysis.freqBinSize;
+
+    setFilterRange([0, nyquist]);
+  }, [analysis?.fftSize, analysis?.freqBinSize]);
 
   if (!analysis) {
     return (
@@ -204,7 +226,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
     );
   }
 
-  const { step1Data, timeData, freqData, peaks, filteredTimeData, enabledSources, freqBinSize, effectiveSR, fftSize } = analysis;
+  const { step1Data, timeData, freqData, filteredTimeData, enabledSources, freqBinSize, effectiveSR, fftSize } = analysis;
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
@@ -247,7 +269,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
           <Step2Graphs
             timeData={timeData}
             freqData={freqData}
-            peaks={peaks}
+            sources={enabledSources}
             sampleRate={sampleRate}
             onSampleRateChange={onSampleRateChange}
             freqBinSize={freqBinSize}
@@ -259,8 +281,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
           <Step3Graphs
             filteredTimeData={filteredTimeData}
             freqData={freqData}
-            filterEnabled={filterEnabled}
-            setFilterEnabled={setFilterEnabled}
+            sources={enabledSources}
             filterRange={filterRange}
             dragStart={dragStart}
             dragEnd={dragEnd}
@@ -300,7 +321,7 @@ function Step1Graphs({ data, sources }: {
                 domain={['dataMin', 'dataMax']}
                 dataKey="time"
                 tick={TICK_STYLE}
-                label={{ value: 'Time', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+                label={{ value: 'Time (s)', position: 'bottom', offset: 0, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
               <YAxis
 
@@ -312,9 +333,9 @@ function Step1Graphs({ data, sources }: {
                 // )}
                 tickFormatter={(v) => v.toFixed(1)}
                 tick={TICK_STYLE}
-                label={{ value: 'Amplitude', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+                label={{ value: 'Amplitude (m)', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
-              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Time: ${label}`} />
+              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Time: ${label} s`} formatter={(value: any, name: any) => [`${value} m`, name]} />
               {sources.map((s, i) => (
                 <Line
                   key={s.id}
@@ -323,8 +344,7 @@ function Step1Graphs({ data, sources }: {
                   stroke={s.color}
                   dot={false}
                   strokeWidth={1.5}
-                  name={s.label}
-
+                  name={`${s.label} (${s.frequency}Hz)`}
                   isAnimationActive={false}
                 />
               ))}
@@ -349,7 +369,7 @@ function Step1Graphs({ data, sources }: {
                 domain={['dataMin', 'dataMax']}
                 dataKey="time"
                 tick={TICK_STYLE}
-                label={{ value: 'Time', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+                label={{ value: 'Time (s)', position: 'bottom', offset: 0, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
               <YAxis
                 type="number"
@@ -361,9 +381,9 @@ function Step1Graphs({ data, sources }: {
                 // )}
                 tickFormatter={(v) => v.toFixed(1)}
                 tick={TICK_STYLE}
-                label={{ value: 'Buoy Height', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+                label={{ value: 'Buoy Height (m)', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
-              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Time: ${label}`} />
+              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Time: ${label} s`} formatter={(value: any, name: any) => [`${value} m`, name]} />
               <Line type="monotone" dataKey="sum" stroke="hsl(185, 70%, 45%)" dot={false} strokeWidth={2} name="Buoy Height" isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
@@ -374,10 +394,10 @@ function Step1Graphs({ data, sources }: {
 }
 
 /* ─── Step 2: Sampled signal + FFT ─── */
-function Step2Graphs({ timeData, freqData, peaks, sampleRate, onSampleRateChange, freqBinSize, effectiveSR, fftSize }: {
+function Step2Graphs({ timeData, freqData, sources, sampleRate, onSampleRateChange, freqBinSize, effectiveSR, fftSize }: {
   timeData: Record<string, number | undefined>[];
   freqData: { frequency: number; magnitude: number; bin: number }[];
-  peaks: { frequency: number; magnitude: number }[];
+  sources: WaveSource[];
   sampleRate: number;
   onSampleRateChange: (r: number) => void;
   freqBinSize: number;
@@ -387,36 +407,55 @@ function Step2Graphs({ timeData, freqData, peaks, sampleRate, onSampleRateChange
   return (
     <>
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-        <h3 className="text-xs font-semibold text-foreground mb-1">
-          Sampling the Continuous Signal
-        </h3>
-        <div className="flex items-center gap-2 mb-1">
-          <Label className="text-[10px] text-muted-foreground whitespace-nowrap">
-            Sample rate: {sampleRate} Hz (Nyquist: {(sampleRate / 2).toFixed(1)} Hz)
-          </Label>
-          <Slider
-            value={[sampleRate]}
-            onValueChange={([v]) => onSampleRateChange(v)}
-            min={2} max={30} step={1}
-            className="w-32"
-          />
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <h3 className="text-xs font-semibold text-foreground mb-1">
+            Sampling the Continuous Signal
+          </h3>
+          <div className="flex items-center">
+            <Label className="text-[10px] text-left px-2 text-muted-foreground whitespace-nowrap">
+              Sampling rate: {sampleRate} Hz (Nyquist: {(sampleRate / 2)} Hz)
+            </Label>
+            <Slider
+              value={[sampleRate]}
+              onValueChange={([v]) => onSampleRateChange(v)}
+              min={0.1} max={7} step={0.1}
+              className="w-32"
+            />
+          </div>
         </div>
         <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={timeData} margin={{ top: 5, right: 10, bottom: 20, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
-              <XAxis dataKey="time" tick={TICK_STYLE}
-                label={{ value: 'Time (s)', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+              <ReferenceLine y={0} />
+              <XAxis
+                type="number"
+                domain={['dataMin', 'dataMax']}
+                dataKey="time"
+                tick={TICK_STYLE}
+                label={{ value: 'Time (s)', position: 'bottom', offset: 0, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
-              <YAxis tick={TICK_STYLE} />
-              <Tooltip {...TOOLTIP_STYLE} />
-              <Line type="monotone" dataKey="raw" stroke="hsl(185, 70%, 45%)" dot={false} strokeWidth={1} strokeOpacity={0.3} name="Continuous" isAnimationActive={false} />
+              <YAxis
+                type="number"
+                // domain={[-AMP_RANGE.max, AMP_RANGE.max]}
+                // interval={0.5}
+                // ticks={Array.from(
+                //   { length: Math.floor((AMP_RANGE.max * 2) / 0.5) + 1 },
+                //   (_, i) => +(-AMP_RANGE.max + i * 0.5).toFixed(1)
+                // )}
+                tickFormatter={(v) => v.toFixed(1)}
+                tick={TICK_STYLE}
+                label={{ value: 'Buoy Height (m)', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+              />
+              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Time: ${label} s`} formatter={(value: any, name: any) => [`${value} m`, name]} />
+              <Line type="monotone" dataKey="raw" stroke="hsl(185, 70%, 45%)" dot={false} strokeWidth={1} strokeOpacity={0.6} name="Buoy Height (Continuous)" isAnimationActive={false} />
               <Line
-                type="monotone" dataKey="sampled"
+                type="monotone"
+                dataKey="sampled"
                 stroke="hsl(30, 85%, 55%)"
                 dot={{ r: 3, fill: 'hsl(30, 85%, 55%)', stroke: 'hsl(30, 85%, 70%)', strokeWidth: 1 }}
                 strokeWidth={0}
-                name="Samples"
+                name="Buoy Height (Sampled)"
                 connectNulls={false}
                 isAnimationActive={false}
               />
@@ -426,33 +465,47 @@ function Step2Graphs({ timeData, freqData, peaks, sampleRate, onSampleRateChange
       </div>
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         <h3 className="text-xs font-semibold text-foreground mb-1">
-          DFT of Sampled Signal — |X[k]|
+          FFT of Sampled Signal — |X[k]|
         </h3>
         <p className="text-[10px] text-muted-foreground mb-1">
           N={fftSize} · fs={effectiveSR.toFixed(1)} Hz · <strong>Δf = fs/N = {freqBinSize.toFixed(3)} Hz</strong>
         </p>
         <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={freqData} margin={{ top: 5, right: 10, bottom: 20, left: 10 }}>
+            <LineChart
+              data={freqData}
+              margin={{ top: 15, right: 10, bottom: 20, left: 10 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
-              <XAxis dataKey="frequency" tick={TICK_STYLE}
+              <XAxis
+                type="number"
+                domain={['dataMin', 'dataMax']}
+                dataKey="frequency"
+                tick={TICK_STYLE}
                 label={{ value: 'Frequency (Hz)', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
-              <YAxis tick={TICK_STYLE} label={{ value: '|X[k]|', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }} />
-              <Tooltip {...TOOLTIP_STYLE} />
+              <YAxis
+                tick={TICK_STYLE}
+                label={{ value: '|X[k]|', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+              />
+              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Frequency: ${label} Hz`} />
               <Line
-                type="stepAfter" dataKey="magnitude"
+                type="stepAfter"
+                dataKey="magnitude"
                 stroke="hsl(30, 85%, 55%)" strokeWidth={1}
                 dot={{ r: 2.5, fill: 'hsl(30, 85%, 55%)', stroke: 'hsl(30, 85%, 70%)', strokeWidth: 1 }}
                 name="|X[k]|" isAnimationActive={false}
               />
-              {peaks.map((peak, i) => (
+              {sources.map((s, i) => (
                 <ReferenceLine
-                  key={i} x={peak.frequency}
+                  key={i}
+                  x={s.frequency}
                   stroke="hsl(200, 20%, 40%)" strokeDasharray="3 3"
                   label={{
-                    value: `${peak.frequency.toFixed(2)} Hz`,
-                    position: 'top', fontSize: 9, fill: 'hsl(200, 20%, 90%)',
+                    value: `${s.label}: ${s.frequency.toFixed(2)} Hz`,
+                    position: 'top',
+                    fontSize: 9,
+                    fill: 'hsl(200, 20%, 90%)',
                   }}
                 />
               ))}
@@ -465,11 +518,10 @@ function Step2Graphs({ timeData, freqData, peaks, sampleRate, onSampleRateChange
 }
 
 /* ─── Step 3: Filtering + IDFT ─── */
-function Step3Graphs({ filteredTimeData, freqData, filterEnabled, setFilterEnabled, filterRange, dragStart, dragEnd, onFreqMouseDown, onFreqMouseMove, onFreqMouseUp }: {
+function Step3Graphs({ filteredTimeData, freqData, sources, filterRange, dragStart, dragEnd, onFreqMouseDown, onFreqMouseMove, onFreqMouseUp }: {
   filteredTimeData: Record<string, number>[] | null;
   freqData: { frequency: number; magnitude: number; bin: number }[];
-  filterEnabled: boolean;
-  setFilterEnabled: (v: boolean) => void;
+  sources: WaveSource[];
   filterRange: [number, number];
   dragStart: number | null;
   dragEnd: number | null;
@@ -486,39 +538,61 @@ function Step3Graphs({ filteredTimeData, freqData, filterEnabled, setFilterEnabl
             Select Passband Range
           </h3>
           <div className="flex items-center gap-1.5 ml-auto">
-            <Switch checked={filterEnabled} onCheckedChange={setFilterEnabled} className="scale-75" />
-            <Label className="text-[10px]">{filterEnabled ? `${filterRange[0].toFixed(2)}–${filterRange[1].toFixed(2)} Hz` : 'Off'}</Label>
+            <p className="text-[10px] text-muted-foreground mb-1">
+              Click & drag on the frequency plot to select which bins to keep
+            </p>
+            <Label className="text-[10px] w-18">{filterRange[0].toFixed(2)}–{filterRange[1].toFixed(2)} Hz</Label>
           </div>
         </div>
-        <p className="text-[10px] text-muted-foreground mb-1">
-          Click & drag on the frequency plot to select which bins to keep
-        </p>
         <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={freqData}
-              margin={{ top: 5, right: 10, bottom: 20, left: 10 }}
+              margin={{ top: 15, right: 10, bottom: 20, left: 10 }}
               onMouseDown={onFreqMouseDown}
               onMouseMove={onFreqMouseMove}
               onMouseUp={onFreqMouseUp}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
-              <XAxis dataKey="frequency" tick={TICK_STYLE}
+              <XAxis
+                type="number"
+                domain={['dataMin', 'dataMax']}
+                dataKey="frequency"
+                tick={TICK_STYLE}
                 label={{ value: 'Frequency (Hz)', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
               />
-              <YAxis tick={TICK_STYLE} label={{ value: '|X[k]|', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }} />
-              <Tooltip {...TOOLTIP_STYLE} />
+              <YAxis
+                tick={TICK_STYLE}
+                label={{ value: '|X[k]|', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+              />
+              <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Frequency: ${label} Hz`} />
+              <Line
+                type="stepAfter"
+                dataKey="magnitude"
+                stroke="hsl(30, 85%, 55%)" strokeWidth={1}
+                dot={{ r: 2.5, fill: 'hsl(30, 85%, 55%)', stroke: 'hsl(30, 85%, 70%)', strokeWidth: 1 }}
+                name="|X[k]|" isAnimationActive={false}
+              />
+              {sources.map((s, i) => (
+                <ReferenceLine
+                  key={i}
+                  x={s.frequency}
+                  stroke="hsl(200, 20%, 40%)" strokeDasharray="3 3"
+                  label={{
+                    value: `${s.label}: ${s.frequency.toFixed(2)} Hz`,
+                    position: 'top',
+                    fontSize: 9,
+                    fill: 'hsl(200, 20%, 90%)',
+                  }}
+                />
+              ))}
 
-              {filterEnabled && (
-                <>
-                  <ReferenceArea x1={0} x2={filterRange[0]} fill="hsl(0, 70%, 50%)" fillOpacity={0.15}
-                    label={{ value: 'Zeroed', fontSize: 9, fill: 'hsl(0,60%,60%)' }} />
-                  <ReferenceArea x1={filterRange[1]} x2={4} fill="hsl(0, 70%, 50%)" fillOpacity={0.15}
-                    label={{ value: 'Zeroed', fontSize: 9, fill: 'hsl(0,60%,60%)' }} />
-                  <ReferenceArea x1={filterRange[0]} x2={filterRange[1]} fill="hsl(145, 65%, 50%)" fillOpacity={0.08}
-                    label={{ value: 'Passband', fontSize: 9, fill: 'hsl(145,60%,60%)' }} />
-                </>
-              )}
+              {/* <ReferenceArea x1={0} x2={filterRange[0]} fill="hsl(0, 70%, 50%)" fillOpacity={0.15} */}
+              {/*   label={{ value: 'Zeroed', fontSize: 9, fill: 'hsl(0,60%,60%)' }} /> */}
+              {/* <ReferenceArea x1={filterRange[1]} x2={4} fill="hsl(0, 70%, 50%)" fillOpacity={0.15} */}
+              {/*   label={{ value: 'Zeroed', fontSize: 9, fill: 'hsl(0,60%,60%)' }} /> */}
+              <ReferenceArea x1={filterRange[0]} x2={filterRange[1]} fill="hsl(145, 65%, 50%)" fillOpacity={0.08}
+                label={{ value: 'Passband', fontSize: 9, fill: 'hsl(145,60%,60%)' }} />
 
               {dragStart !== null && dragEnd !== null && (
                 <ReferenceArea
@@ -527,13 +601,6 @@ function Step3Graphs({ filteredTimeData, freqData, filterEnabled, setFilterEnabl
                   fill="hsl(185, 70%, 45%)" fillOpacity={0.2}
                 />
               )}
-
-              <Line
-                type="stepAfter" dataKey="magnitude"
-                stroke="hsl(30, 85%, 55%)" strokeWidth={1}
-                dot={{ r: 2.5, fill: 'hsl(30, 85%, 55%)', stroke: 'hsl(30, 85%, 70%)', strokeWidth: 1 }}
-                name="|X[k]|" isAnimationActive={false}
-              />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -542,9 +609,9 @@ function Step3Graphs({ filteredTimeData, freqData, filterEnabled, setFilterEnabl
       {/* Filtered / reconstructed signal */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         <h3 className="text-xs font-semibold text-foreground mb-1">
-          {filterEnabled ? 'IDFT Reconstruction — Filtered Signal' : 'Enable filter to see IDFT reconstruction'}
+          iFFT Reconstruction — Filtered Signal
         </h3>
-        {filterEnabled && filteredTimeData ? (
+        {filteredTimeData ? (
           <>
             <p className="text-[10px] text-muted-foreground mb-1">
               X[k] outside passband → 0, then IDFT → cleaned time-domain signal
@@ -553,13 +620,22 @@ function Step3Graphs({ filteredTimeData, freqData, filterEnabled, setFilterEnabl
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={filteredTimeData} margin={{ top: 5, right: 10, bottom: 20, left: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
-                  <XAxis dataKey="time" tick={TICK_STYLE}
+                  <XAxis
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
+                    dataKey="time"
+                    tick={TICK_STYLE}
                     label={{ value: 'Time (s)', position: 'bottom', offset: 5, fontSize: 10, fill: 'hsl(200,10%,50%)' }}
                   />
-                  <YAxis tick={TICK_STYLE} />
-                  <Tooltip {...TOOLTIP_STYLE} />
-                  <Line type="monotone" dataKey="raw" stroke="hsl(185, 70%, 45%)" dot={false} strokeWidth={1} strokeOpacity={0.3} name="Original" isAnimationActive={false} />
-                  <Line type="monotone" dataKey="filtered" stroke="hsl(145, 65%, 50%)" dot={false} strokeWidth={2} name="Filtered (IDFT)" isAnimationActive={false} />
+                  <YAxis
+                    type="number"
+                    tickFormatter={(v) => v.toFixed(1)}
+                    tick={TICK_STYLE}
+                    label={{ value: 'Height (m)', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(200,10%,50%)' }}
+                  />
+                  <Tooltip {...TOOLTIP_STYLE} labelFormatter={(label: any) => `Time: ${label} s`} formatter={(value: any, name: any) => [`${value} m`, name]} />
+                  <Line type="monotone" dataKey="raw" stroke="hsl(185, 70%, 45%)" dot={false} strokeWidth={1} strokeOpacity={0.5} name="Original" isAnimationActive={false} />
+                  <Line type="monotone" dataKey="filtered" connectNulls stroke="hsl(145, 65%, 50%)" dot={false} strokeWidth={2} name="Filtered (iFFT)" isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>

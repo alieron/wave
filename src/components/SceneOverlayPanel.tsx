@@ -55,7 +55,7 @@ function SourceItem({ source, onUpdate, onRemove }: {
               </Label>
               <Slider
                 value={[source.frequency]}
-                onValueChange={([v]) => onUpdate(source.id, { frequency: Math.round(v) })}
+                onValueChange={([v]) => onUpdate(source.id, { frequency: (v) })}
                 min={FREQ_RANGE.min} max={FREQ_RANGE.max} step={FREQ_RANGE.step}
                 className="w-24"
               />
@@ -75,9 +75,9 @@ function SourceItem({ source, onUpdate, onRemove }: {
                 min={AMP_RANGE.min} max={AMP_RANGE.max} step={AMP_RANGE.step}
                 className="w-24"
               />
-              <InfoTip>
-                Wave amplitude in metres. Typical ocean swells: 0.3–1.5m. Boat wakes: 0.05–0.2m.
-              </InfoTip>
+              {/* <InfoTip> */}
+              {/*   Wave amplitude in metres. Typical ocean swells: 0.3–1.5m. Boat wakes: 0.05–0.2m. */}
+              {/* </InfoTip> */}
             </div>
             <div className="flex items-center gap-1.5">
               <Label className="text-[10px] text-muted-foreground w-4">X</Label>

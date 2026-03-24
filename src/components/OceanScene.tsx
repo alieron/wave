@@ -38,10 +38,11 @@ function WaterSurface({ sources, timeRef, isResizingRef }: {
   return (
     <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[60, 60, 50, 50]} />
+      {/* <planeGeometry args={[60, 60, 80, 80]} /> */}
       <meshStandardMaterial
         color="#0a6e8a"
         roughness={0.3}
-        metalness={0.1}
+        metalness={0.05}
         side={THREE.DoubleSide}
       />
     </mesh>

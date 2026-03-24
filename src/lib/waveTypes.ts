@@ -18,30 +18,30 @@ export type SourcePreset = {
 
 export const DEFAULT_SOURCES: WaveSource[] = [
   {
-    id: '1', label: 'Long Swell', x: -20, z: -15,
-    frequency: 1, amplitude: 2.5,
+    id: '1', label: 'Calm Swell', x: -20, z: -15,
+    frequency: 0.02, amplitude: 2.5,
     enabled: true, color: '#00d4ff',
   },
   {
     id: '2', label: 'Wind Chop', x: 15, z: 12,
-    frequency: 4, amplitude: 1,
+    frequency: 0.5, amplitude: 1.25,
     enabled: true, color: '#00ff88',
   },
   {
     id: '3', label: 'Boat Wake', x: 5, z: -5,
-    frequency: 6, amplitude: 1,
+    frequency: 2, amplitude: 1,
     enabled: true, color: '#ff8800',
   },
 ];
 
-export const FREQ_RANGE = { min: 1, max: 15, step: 1 };
+export const FREQ_RANGE = { min: 0.01, max: 3.00, step: 0.01 };
 export const AMP_RANGE = { min: 0, max: 2.5, step: 0.01 };
 
 export const WAVE_SPEED = 5;
-export const SAMPLE_RATE = 30;
-export const BUFFER_SIZE = 512;
-export const TIME_SCALE = 0.1;
-export const DIST_SCALE = 0.25;
+export const SAMPLE_RATE = 3;
+export const TIME_SCALE = 1; // oopsies
+export const DIST_SCALE = 0.15;
+const PRECISION = 100;
 
 export function batchComputeWaveHeights(
   pos: any,
@@ -59,7 +59,7 @@ export function batchComputeWaveHeights(
     const sx = s.x;
     const sz = s.z;
     const amp = s.amplitude * DIST_SCALE;
-    const omega = 2 * Math.PI * s.frequency * TIME_SCALE;
+    const omega = 2 * Math.PI * s.frequency;
     const k = (omega * DIST_SCALE);
 
     for (let i = 0; i < count; i++) {
@@ -102,7 +102,7 @@ export function computeWaveHeight(
 
     const dist = Math.sqrt(dx * dx + dz * dz);
 
-    const omega = 2 * Math.PI * s.frequency * TIME_SCALE;
+    const omega = 2 * Math.PI * s.frequency;
     const k = (omega * DIST_SCALE);
 
     h += s.amplitude * DIST_SCALE *
@@ -121,7 +121,7 @@ export function computeIndividualWaveHeight(
   if (!source.enabled) return 0;
   const dx = px - source.x, dz = pz - source.z;
   const dist = Math.sqrt(dx * dx + dz * dz);
-  const omega = 2 * Math.PI * source.frequency * TIME_SCALE;
+  const omega = 2 * Math.PI * source.frequency;
   const k = (omega * DIST_SCALE);
   // const falloff = 1 / Math.sqrt(dist * 0.05 + 1);
   return source.amplitude * DIST_SCALE * Math.sin(omega * time - k * dist);
@@ -134,7 +134,7 @@ export function computeFundamentalPeriod(sources: WaveSource[]): number {
   const enabled = sources.filter(s => s.enabled);
   if (enabled.length === 0) return 1;
 
-  const freqValues = enabled.map(s => Math.round(s.frequency));
+  const freqValues = enabled.map(s => Math.round(s.frequency * PRECISION));
 
   function gcd(a: number, b: number): number {
     a = Math.abs(a); b = Math.abs(b);
@@ -147,7 +147,7 @@ export function computeFundamentalPeriod(sources: WaveSource[]): number {
     g = gcd(g, freqValues[i]);
   }
 
-  return 1 / (g * TIME_SCALE);
+  return PRECISION / (g);
 }
 
 /**
