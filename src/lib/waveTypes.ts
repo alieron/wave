@@ -19,7 +19,7 @@ export type SourcePreset = {
 export const DEFAULT_SOURCES: WaveSource[] = [
   {
     id: '1', label: 'Calm Swell', x: -20, z: -15,
-    frequency: 0.02, amplitude: 2.5,
+    frequency: 0.1, amplitude: 2.5,
     enabled: true, color: '#00d4ff',
   },
   {
