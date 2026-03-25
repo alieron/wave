@@ -77,9 +77,26 @@ function BuoyMesh({ x, z, sources, timeRef, isResizingRef }: {
         <cylinderGeometry args={[0.04, 0.04, 1.4, 6]} />
         <meshStandardMaterial color="#ff3333" emissive="#ff0000" emissiveIntensity={0.3} />
       </mesh>
-      <mesh position={[0.25, 1.7, 0]}>
-        <planeGeometry args={[0.5, 0.3]} />
-        <meshStandardMaterial color="#ff3333" emissive="#ff0000" emissiveIntensity={0.4} side={THREE.DoubleSide} />
+      <mesh position={[0.1, 1.7, 0]}>
+        {/* <planeGeometry args={[0.5, 0.3]} /> */}
+        {/* <meshStandardMaterial color="#ff3333" emissive="#ff0000" emissiveIntensity={0.4} side={THREE.DoubleSide} /> */}
+        {/* Blue */}
+        <mesh position={[0, 0, 0]}>
+          <planeGeometry args={[0.17, 0.3]} />
+          <meshStandardMaterial color="#0055A4" side={THREE.DoubleSide} />
+        </mesh>
+
+        {/* White */}
+        <mesh position={[0.17, 0, 0]}>
+          <planeGeometry args={[0.17, 0.3]} />
+          <meshStandardMaterial color="#FFFFFF" side={THREE.DoubleSide} />
+        </mesh>
+
+        {/* Red */}
+        <mesh position={[0.34, 0, 0]}>
+          <planeGeometry args={[0.17, 0.3]} />
+          <meshStandardMaterial color="#EF4135" side={THREE.DoubleSide} />
+        </mesh>
       </mesh>
     </group>
   );
