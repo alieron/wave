@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Waves, Play, Pause } from 'lucide-react';
+import { Waves, Play, Pause, BookOpen } from 'lucide-react';
 import { Panel, Group, Separator } from 'react-resizable-panels';
 import OceanScene from '@/components/OceanScene';
 import SceneOverlayPanel from '@/components/SceneOverlayPanel';
 import AnalysisPanel from '@/components/AnalysisPanel';
+import TutorialOverlay from '@/components/TutorialOverlay';
 import { type WaveSource, DEFAULT_SOURCES, SAMPLE_RATE } from '@/lib/waveTypes';
 import { Button } from '@/components/ui/button';
 
@@ -13,6 +14,8 @@ const Index = () => {
   const [buoyZ, setBuoyZ] = useState(0);
   const [paused, setPaused] = useState(false);
   const [userSampleRate, setUserSampleRate] = useState(SAMPLE_RATE);
+  const [analysisStep, setAnalysisStep] = useState(0);
+  const [tutorialOpen, setTutorialOpen] = useState(true);
   const isResizingRef = useRef(false);
 
   const handleChanging = useCallback(() => {
@@ -45,6 +48,15 @@ const Index = () => {
         <div className="ml-auto flex items-center gap-2">
           <Button
             size="sm"
+            variant={tutorialOpen ? 'default' : 'secondary'}
+            className="h-6 text-[10px] px-3 rounded-full"
+            onClick={() => setTutorialOpen(!tutorialOpen)}
+          >
+            <BookOpen className="w-3 h-3 mr-1" />
+            Tutorial
+          </Button>
+          <Button
+            size="sm"
             variant={paused ? 'default' : 'secondary'}
             className="h-6 w-6 p-0 rounded-full flex items-center justify-center"
             onClick={() => setPaused(!paused)}
@@ -74,6 +86,9 @@ const Index = () => {
               buoyZ={buoyZ}
               onBuoyChange={(x, z) => { setBuoyX(x); setBuoyZ(z); }}
             />
+            {tutorialOpen && (
+              <TutorialOverlay step={analysisStep} onClose={() => setTutorialOpen(false)} />
+            )}
           </div>
         </Panel>
 
@@ -92,6 +107,8 @@ const Index = () => {
               buoyZ={buoyZ}
               sampleRate={userSampleRate}
               onSampleRateChange={setUserSampleRate}
+              step={analysisStep}
+              onStepChange={setAnalysisStep}
             />
           </div>
         </Panel>

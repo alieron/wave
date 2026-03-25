@@ -1,15 +1,16 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine, Scatter
+  Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine
 } from 'recharts';
 import { fft as computeFFT, ifft, magnitude, applyBandpass } from '@/lib/fft';
-import { type WaveSource, AMP_RANGE, DIST_SCALE, SAMPLE_RATE, computeIndividualWaveHeight, computeWaveHeight, computeFundamentalPeriod, TIME_SCALE } from '@/lib/waveTypes';
-import { Switch } from '@/components/ui/switch';
+import { type WaveSource, DIST_SCALE, computeIndividualWaveHeight, computeFundamentalPeriod } from '@/lib/waveTypes';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { MathTip } from './MathTip';
+import { InlineMath } from 'react-katex';
 
 interface Props {
   sources: WaveSource[];
@@ -17,6 +18,8 @@ interface Props {
   buoyZ: number;
   sampleRate: number;
   onSampleRateChange: (rate: number) => void;
+  step: number;
+  onStepChange: (step: number) => void;
 }
 
 const GRID_STROKE = 'hsl(215, 15%, 18%)';
@@ -32,27 +35,27 @@ const TOOLTIP_STYLE = {
 };
 
 const STEP_LABELS = [
-  '① Individual Waves → Superposition',
-  '② Time Domain → Frequency Domain (FFT)',
-  '③ Frequency Filtering → iFFT Reconstruction',
+  '1. Individual Waves → Superposition',
+  '2. Time Domain → Frequency Domain (FFT)',
+  '3. Frequency Filtering → iFFT Reconstruction',
 ];
 
 // Fixed analytical window: next power-of-2 at or above 4 s of samples.
 // This gives the FFT a stable, deterministic signal regardless of simulation time.
-const ANALYSIS_N = (() => {
-  let n = 1;
-  const target = SAMPLE_RATE * 4;
-  while (n < target) n *= 2;
-  return n;
-})();
+// const ANALYSIS_N = (() => {
+//   let n = 1;
+//   const target = SAMPLE_RATE * 4;
+//   while (n < target) n *= 2;
+//   return n;
+// })();
 
 // Visible slice in time-domain plots (keeps charts snappy)
 // const DISPLAY_N = Math.min(256, ANALYSIS_N);
 const DISPLAY_N = 512;
 
-export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSampleRateChange }: Props) {
-  const [step, setStep] = useState(0);
-  const [filterRange, setFilterRange] = useState<[number, number]>([0, 0.4]);
+export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSampleRateChange, step, onStepChange }: Props) {
+  const setStep = onStepChange;
+  const [filterRange, setFilterRange] = useState<[number, number]>([0, 0]);
   const [dragStart, setDragStart] = useState<number | null>(null);
   const [dragEnd, setDragEnd] = useState<number | null>(null);
 
@@ -180,7 +183,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
       filteredTimeData.push(entry);
     }
 
-    return { step1Data, timeData, freqData, filteredTimeData, enabledSources, freqBinSize, effectiveSR, fftSize };
+    return { step1Data, timeData, freqData, fundamentalPeriod, filteredTimeData, enabledSources, freqBinSize, effectiveSR, fftSize, sampledSize: sampledValues.length };
   }, [sources, buoyX, buoyZ, filterRange, sampleRate]);
 
   // Frequency chart drag handlers for filter range
@@ -226,7 +229,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
     );
   }
 
-  const { step1Data, timeData, freqData, filteredTimeData, enabledSources, freqBinSize, effectiveSR, fftSize } = analysis;
+  const { step1Data, timeData, freqData, fundamentalPeriod, filteredTimeData, enabledSources, freqBinSize, effectiveSR, fftSize, sampledSize } = analysis;
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
@@ -234,7 +237,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
       <div className="flex items-center justify-between px-4 py-1.5 border-b border-border bg-card/50 shrink-0">
         <Button
           size="sm" variant="ghost" className="h-6 text-xs"
-          onClick={() => setStep(s => Math.max(0, s - 1))}
+          onClick={() => setStep(Math.max(0, step - 1))}
           disabled={step === 0}
         >
           <ChevronLeft className="w-3 h-3 mr-1" /> Prev
@@ -255,7 +258,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
         </div>
         <Button
           size="sm" variant="ghost" className="h-6 text-xs"
-          onClick={() => setStep(s => Math.min(2, s + 1))}
+          onClick={() => setStep(Math.min(2, step + 1))}
           disabled={step === 2}
         >
           Next <ChevronRight className="w-3 h-3 ml-1" />
@@ -264,7 +267,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
 
       {/* Graphs area */}
       <div className="flex-1 flex gap-2 p-3 min-h-0 overflow-hidden">
-        {step === 0 && <Step1Graphs data={step1Data} sources={enabledSources} />}
+        {step === 0 && <Step1Graphs data={step1Data} sources={enabledSources} fundamentalPeriod={fundamentalPeriod} />}
         {step === 1 && (
           <Step2Graphs
             timeData={timeData}
@@ -275,6 +278,7 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
             freqBinSize={freqBinSize}
             effectiveSR={effectiveSR}
             fftSize={fftSize}
+            sampledSize={sampledSize}
           />
         )}
         {step === 2 && (
@@ -298,16 +302,26 @@ export default function AnalysisPanel({ sources, buoyX, buoyZ, sampleRate, onSam
 const chartMargin = { top: 5, right: 10, bottom: 15, left: 5 };
 
 /* ─── Step 1: Individual waves + Superposition ─── */
-function Step1Graphs({ data, sources }: {
+function Step1Graphs({ data, sources, fundamentalPeriod }: {
   data: Record<string, number>[];
   sources: WaveSource[];
+  fundamentalPeriod: number;
 }) {
   return (
     <>
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-        <h3 className="text-xs font-semibold text-foreground mb-1">
-          Individual Wave Functions at Buoy Position
-        </h3>
+        <div className="flex items-center gap-2 mb-1">
+          <h3 className="text-xs font-semibold text-foreground mb-1">
+            Individual Wave Functions at Buoy Position
+          </h3>
+          <MathTip>
+            Fundamental frequency: <InlineMath math="f_0 = gcd(f_1, ..., f_n)" />
+            <br />
+            Fundamental period: <InlineMath math="T_0 = \frac{1}{f_0}" />
+            <br />
+            Currently: <InlineMath math="f_0" /> = {1 / fundamentalPeriod} Hz, <InlineMath math="T_0" /> = {fundamentalPeriod} s
+          </MathTip>
+        </div>
         {/* <p className="text-[10px] text-muted-foreground mb-1"> */}
         {/*   Each source: A · sin(2πft − kr) / √(r·0.05+1) */}
         {/* </p> */}
@@ -353,7 +367,7 @@ function Step1Graphs({ data, sources }: {
         </div>
       </div>
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-        <h3 className="text-xs font-semibold text-foreground mb-1">
+        <h3 className="text-xs font-semibold text-foreground mb-2">
           Superposition → Buoy Height h(t) = Σ waves
         </h3>
         {/* <p className="text-[10px] text-muted-foreground mb-1"> */}
@@ -394,7 +408,7 @@ function Step1Graphs({ data, sources }: {
 }
 
 /* ─── Step 2: Sampled signal + FFT ─── */
-function Step2Graphs({ timeData, freqData, sources, sampleRate, onSampleRateChange, freqBinSize, effectiveSR, fftSize }: {
+function Step2Graphs({ timeData, freqData, sources, sampleRate, onSampleRateChange, freqBinSize, effectiveSR, fftSize, sampledSize }: {
   timeData: Record<string, number | undefined>[];
   freqData: { frequency: number; magnitude: number; bin: number }[];
   sources: WaveSource[];
@@ -403,6 +417,7 @@ function Step2Graphs({ timeData, freqData, sources, sampleRate, onSampleRateChan
   freqBinSize: number;
   effectiveSR: number;
   fftSize: number;
+  sampledSize: number;
 }) {
   return (
     <>
@@ -464,12 +479,21 @@ function Step2Graphs({ timeData, freqData, sources, sampleRate, onSampleRateChan
         </div>
       </div>
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-        <h3 className="text-xs font-semibold text-foreground mb-1">
-          FFT of Sampled Signal — |X[k]|
-        </h3>
-        <p className="text-[10px] text-muted-foreground mb-1">
-          N={fftSize} · fs={effectiveSR.toFixed(1)} Hz · <strong>Δf = fs/N = {freqBinSize.toFixed(3)} Hz</strong>
-        </p>
+        <div className="flex items-center gap-2 mb-1">
+          <h3 className="text-xs font-semibold text-foreground mb-1">
+            FFT of Sampled Signal — |X[k]|
+          </h3>
+          {/* <p className="text-[10px] text-muted-foreground mb-1"> */}
+          {/*   N={fftSize} · fs={effectiveSR.toFixed(1)} Hz · <strong>Δf = fs/N = {freqBinSize.toFixed(3)} Hz</strong> */}
+          {/* </p> */}
+          <MathTip>
+            Frequency Bin Size: <InlineMath math="\Delta f = \frac{f_s}{N}" />
+            <br />
+            Currently: <InlineMath math="N" /> = {sampledSize}, <InlineMath math="f_s" /> = {effectiveSR.toFixed(1)} Hz
+            <br />
+            <InlineMath math="\Delta f" /> = {freqBinSize.toFixed(3)} Hz
+          </MathTip>
+        </div>
         <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
@@ -500,12 +524,15 @@ function Step2Graphs({ timeData, freqData, sources, sampleRate, onSampleRateChan
                 <ReferenceLine
                   key={i}
                   x={s.frequency}
-                  stroke="hsl(200, 20%, 40%)" strokeDasharray="3 3"
+                  // stroke="hsl(200, 20%, 40%)"
+                  stroke={s.color}
+                  strokeDasharray="3 3"
                   label={{
                     value: `${s.label}: ${s.frequency.toFixed(2)} Hz`,
                     position: 'top',
                     fontSize: 9,
-                    fill: 'hsl(200, 20%, 90%)',
+                    // fill: 'hsl(200, 20%, 90%)',
+                    fill: s.color,
                   }}
                 />
               ))}
@@ -577,12 +604,15 @@ function Step3Graphs({ filteredTimeData, freqData, sources, filterRange, dragSta
                 <ReferenceLine
                   key={i}
                   x={s.frequency}
-                  stroke="hsl(200, 20%, 40%)" strokeDasharray="3 3"
+                  // stroke="hsl(200, 20%, 40%)"
+                  stroke={s.color}
+                  strokeDasharray="3 3"
                   label={{
                     value: `${s.label}: ${s.frequency.toFixed(2)} Hz`,
                     position: 'top',
                     fontSize: 9,
-                    fill: 'hsl(200, 20%, 90%)',
+                    // fill: 'hsl(200, 20%, 90%)',
+                    fill: s.color,
                   }}
                 />
               ))}
@@ -608,14 +638,14 @@ function Step3Graphs({ filteredTimeData, freqData, sources, filterRange, dragSta
 
       {/* Filtered / reconstructed signal */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-        <h3 className="text-xs font-semibold text-foreground mb-1">
+        <h3 className="text-xs font-semibold text-foreground mb-2">
           iFFT Reconstruction — Filtered Signal
         </h3>
         {filteredTimeData ? (
           <>
-            <p className="text-[10px] text-muted-foreground mb-1">
-              X[k] outside passband → 0, then IDFT → cleaned time-domain signal
-            </p>
+            {/* <p className="text-[10px] text-muted-foreground mb-1"> */}
+            {/*   X[k] outside passband → 0, then IDFT → cleaned time-domain signal */}
+            {/* </p> */}
             <div className="flex-1 min-h-0">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={filteredTimeData} margin={{ top: 5, right: 10, bottom: 20, left: 10 }}>
